@@ -1,8 +1,9 @@
 # Deploys the repository contents (static site) to GitHub Pages on every
 # push to `main`. No build step — the site is plain HTML/CSS/JS.
 #
-# One-time setup:
-#   Settings → Pages → Source → "GitHub Actions"
+# `enablement: true` makes the workflow turn Pages on for the repo on its
+# first run (avoids the manual "Settings → Pages → Source → GitHub Actions"
+# chicken-and-egg). Repo permissions: Actions → "Read and write".
 #
 # After the first successful run the live URL is:
 #   https://<owner>.github.io/OCR-Image-AI/
@@ -24,6 +25,11 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# Forward-compat: opt into Node.js 24 early. Node 20 actions are deprecated
+# Sept 2026 (per GitHub Actions runner changelog).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -36,6 +42,9 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Auto-enable Pages on first run; otherwise the action 404s.
+          enablement: true
 
       - name: Upload site
         uses: actions/upload-pages-artifact@v3

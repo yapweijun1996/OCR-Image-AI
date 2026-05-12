@@ -15,6 +15,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Forward-compat: opt into Node 24 ahead of the September 2026 deprecation
+# of Node 20 in third-party actions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   lhci:
     runs-on: ubuntu-latest
