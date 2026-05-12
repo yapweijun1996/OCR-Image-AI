@@ -1,0 +1,36 @@
+# Lighthouse CI — guardrail against PWA / a11y / performance regressions.
+#
+# Runs on PRs and on pushes to main. Serves the repo as a static site via
+# `http-server` and points Lighthouse at the local URL — no deploy needed.
+#
+# Thresholds are deliberately attainable today; bump them as the project
+# improves. See `.lighthouserc.json` for asserts.
+
+name: Lighthouse CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lhci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install LHCI
+        run: npm install -g @lhci/cli@0.13.x
+
+      - name: Run Lighthouse CI
+        run: lhci autorun
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}

@@ -1,0 +1,48 @@
+# Deploys the repository contents (static site) to GitHub Pages on every
+# push to `main`. No build step — the site is plain HTML/CSS/JS.
+#
+# One-time setup:
+#   Settings → Pages → Source → "GitHub Actions"
+#
+# After the first successful run the live URL is:
+#   https://<owner>.github.io/OCR-Image-AI/
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time. Don't cancel an in-flight run.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Repository root is the site root — no build artifacts.
+          path: '.'
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

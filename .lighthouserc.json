@@ -1,0 +1,47 @@
+{
+  "ci": {
+    "collect": {
+      "staticDistDir": ".",
+      "url": ["http://localhost/index.html"],
+      "numberOfRuns": 3,
+      "settings": {
+        "preset": "desktop",
+        "skipAudits": [
+          "uses-http2",
+          "is-on-https",
+          "redirects-http"
+        ]
+      }
+    },
+    "assert": {
+      "preset": "lighthouse:no-pwa",
+      "assertions": {
+        "categories:performance":   ["warn",  { "minScore": 0.85 }],
+        "categories:accessibility": ["error", { "minScore": 0.90 }],
+        "categories:best-practices":["warn",  { "minScore": 0.90 }],
+        "categories:seo":           ["warn",  { "minScore": 0.85 }],
+
+        "installable-manifest":     "error",
+        "service-worker":           "error",
+        "viewport":                 "error",
+        "themed-omnibox":           "error",
+        "maskable-icon":            "error",
+        "apple-touch-icon":         "error",
+        "content-width":            "error",
+
+        "csp-xss":                  "warn",
+        "color-contrast":           "error",
+        "image-alt":                "error",
+        "label":                    "error",
+        "tap-targets":              "error",
+
+        "uses-passive-event-listeners": "off",
+        "no-unload-listeners":      "off",
+        "errors-in-console":        ["warn", { "minScore": 1 }]
+      }
+    },
+    "upload": {
+      "target": "temporary-public-storage"
+    }
+  }
+}
