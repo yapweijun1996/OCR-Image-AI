@@ -1,22 +1,31 @@
 /**
- * api.js — streaming SSE client for the openai-gateway Responses API.
+ * api.js — streaming SSE client + batch runner.
  *
- * Pattern from KB 461a53d5 (verified 2026-05-12 by the gateway operator):
+ * `runBatch()` walks the queue (`js/queue.js`) one item at a time,
+ * dispatches `runOne(item)` for each pending entry, and stops cleanly
+ * when the user clicks Stop (AbortController scoped to the entire batch).
+ *
+ * Pattern from KB 461a53d5 (verified 2026-05-12):
  *   - `stream: true` so Cloudflare's 100s 524 timeout never fires
- *   - Live render: each `response.output_text.delta` is appended as a
- *     text node (cheap, no full re-render per token)
- *   - AbortController wired to the Stop button — partial output is kept
+ *   - Live render: `response.output_text.delta` → appended text node
+ *   - `response.reasoning_summary_text.delta` → Thinking panel
  *
- * See `docs/API.md` for the full event-type reference.
+ * See `docs/API.md` for the full event reference.
  */
 
-import { $, setStatus, haptic } from './utils.js';
+import { $, setStatus, haptic, escapeHtml } from './utils.js';
 import { getConfig, saveConfig } from './config.js';
-import { getCurrent } from './image.js';
 import { dbAdd } from './db.js';
 import { renderHistory } from './history.js';
+import {
+  getItem, findNextPending, pendingCount,
+  setItemStatus, setItemResult,
+  setActiveItemId, selectForView,
+  initQueue,
+} from './queue.js';
 
 let abortCtrl = null;
+let batchRunning = false;
 
 /* ---------- Thinking panel helpers ---------- */
 function resetThinking() {
@@ -37,13 +46,11 @@ function appendThinking(delta) {
   const body = $('thinkingBody');
   if (!el || !body || !delta) return;
   if (el.hidden) {
-    // First reasoning delta — reveal and auto-expand so the user sees activity.
     el.hidden = false;
     el.classList.remove('collapsed');
     $('thinkingHead')?.setAttribute('aria-expanded', 'true');
   }
   body.appendChild(document.createTextNode(delta));
-  // Auto-scroll to follow the latest text.
   body.scrollTop = body.scrollHeight;
 }
 
@@ -56,19 +63,13 @@ function finishThinking() {
   $('thinkingHead')?.setAttribute('aria-expanded', 'false');
 }
 
-/**
- * Read an SSE stream from `body`, calling `onEvent` for each parsed event.
- * Aborts cleanly when `signal.aborted` flips true.
- */
+/* ---------- SSE reader ---------- */
 async function readSSE(body, onEvent, signal) {
   const reader = body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
   try {
     while (true) {
-      if (signal?.aborted) {
-        try { await reader.cancel(); } catch (_) {}
-        return;
-      }
+      if (signal?.aborted) { try { await reader.cancel(); } catch (_) {} return; }
       const { value, done } = await reader.read();
       if (done) break;
       buffer += value;
@@ -90,25 +91,28 @@ async function readSSE(body, onEvent, signal) {
   }
 }
 
-export async function runOCR() {
-  const current = getCurrent();
-  if (!current) return;
+/* ---------- One-item runner ---------- */
 
-  const cfg = getConfig();
-  if (!cfg.apiKey)   { setStatus('Missing API key.', 'err');   return; }
-  if (!cfg.endpoint) { setStatus('Missing endpoint.', 'err'); return; }
-  saveConfig();
-
+/**
+ * Run OCR for a single queue item. Updates queue state, streams into
+ * the shared Thinking + Result panels, persists to history on success.
+ *
+ * Returns true if processed (success OR error), false if aborted.
+ */
+async function runOne(item, cfg, signal, batchPosition) {
   const resultEl = $('result');
-  $('runBtn').disabled  = true;
-  $('stopBtn').hidden   = false;
-  $('stopBtn').disabled = false;
-  resultEl.textContent    = '';
+  setActiveItemId(item.id);
+  selectForView(item.id, { fireListener: false });
+
+  // Reset display for this item.
+  resultEl.textContent = '';
   $('outMeta').textContent = '';
   resetThinking();
-  setStatus('<span class="spin"></span>Thinking…');
-
-  abortCtrl = new AbortController();
+  setStatus(
+    `<span class="spin"></span>Thinking… <span class="status-pos">` +
+    `(${batchPosition.idx} / ${batchPosition.total} · ${escapeHtml(item.name)})</span>`
+  );
+  setItemStatus(item.id, 'running');
 
   const body = {
     model:  cfg.model,
@@ -118,7 +122,7 @@ export async function runOCR() {
       role: 'user',
       content: [
         { type: 'input_text',  text: cfg.prompt || 'Read all text in this image.' },
-        { type: 'input_image', image_url: current.dataUrl },
+        { type: 'input_image', image_url: item.dataUrl },
       ],
     }],
   };
@@ -130,7 +134,7 @@ export async function runOCR() {
   try {
     const resp = await fetch(cfg.endpoint, {
       method: 'POST',
-      signal: abortCtrl.signal,
+      signal,
       headers: {
         'Authorization': 'Bearer ' + cfg.apiKey,
         'Content-Type':  'application/json',
@@ -156,8 +160,7 @@ export async function runOCR() {
     await readSSE(resp.body, (event) => {
       const t = event?.type;
 
-      // Reasoning summary deltas (effort=medium and above with summary:auto).
-      // Be defensive about event-name drift — the API has shipped a few variants.
+      // Reasoning summary deltas.
       if (
         t === 'response.reasoning_summary_text.delta' ||
         t === 'response.reasoning_summary.delta'      ||
@@ -166,25 +169,17 @@ export async function runOCR() {
         appendThinking(event.delta || event.text || '');
         return;
       }
-      if (
-        t === 'response.reasoning_summary_text.done' ||
-        t === 'response.reasoning_summary.done'      ||
-        t === 'response.reasoning.done'              ||
-        t === 'response.reasoning_summary_part.done'
-      ) {
-        // Reasoning phase wrapped up — soft-collapse, but don't switch status
-        // yet (the answer may still take a moment to start streaming).
-        return;
-      }
 
-      // Output text deltas.
       if (t === 'response.output_text.delta') {
         const delta = event.delta || '';
         if (!delta) return;
         if (!outputStarted) {
           outputStarted = true;
           finishThinking();
-          setStatus('<span class="spin"></span>Writing…');
+          setStatus(
+            `<span class="spin"></span>Writing… <span class="status-pos">` +
+            `(${batchPosition.idx} / ${batchPosition.total} · ${escapeHtml(item.name)})</span>`
+          );
         }
         accumulated += delta;
         resultEl.appendChild(document.createTextNode(delta));
@@ -197,31 +192,32 @@ export async function runOCR() {
         const msg = event?.error?.message || event?.message || 'stream error';
         throw new Error(msg);
       }
-    }, abortCtrl.signal);
+    }, signal);
 
     const ms = performance.now() - t0;
     const finalText = accumulated || '(no text recognized)';
     if (!accumulated) resultEl.textContent = finalText;
 
-    const parts = [`${(ms / 1000).toFixed(2)}s`, cfg.model];
+    const metaParts = [`${(ms / 1000).toFixed(2)}s`, cfg.model];
     if (usage) {
       const reasoning = usage.output_tokens_details?.reasoning_tokens ?? 0;
-      parts.push(`in:${usage.input_tokens}`);
-      parts.push(`out:${usage.output_tokens}`);
-      if (reasoning) parts.push(`reasoning:${reasoning}`);
+      metaParts.push(`in:${usage.input_tokens}`);
+      metaParts.push(`out:${usage.output_tokens}`);
+      if (reasoning) metaParts.push(`reasoning:${reasoning}`);
     }
-    $('outMeta').textContent = parts.join(' · ');
-    setStatus('Done', 'ok');
-    haptic();
+    $('outMeta').textContent = metaParts.join(' · ');
+
+    setItemResult(item.id, { text: finalText, usage, durationMs: Math.round(ms) });
+    setItemStatus(item.id, 'done');
 
     await dbAdd({
       createdAt: Date.now(),
-      image: current.dataUrl,
-      name:  current.name,
-      size:  current.size,
-      type:  current.type,
-      w:     current.w,
-      h:     current.h,
+      image: item.dataUrl,
+      name:  item.name,
+      size:  item.size,
+      type:  item.type,
+      w:     item.w,
+      h:     item.h,
       prompt: cfg.prompt,
       model:  cfg.model,
       effort: cfg.effort,
@@ -230,34 +226,128 @@ export async function runOCR() {
       durationMs: Math.round(ms),
     });
     renderHistory();
+    return true;
   } catch (e) {
     if (e.name === 'AbortError') {
-      setStatus('Stopped', '');
+      setItemStatus(item.id, 'aborted', { error: 'Aborted by user' });
       if (accumulated) {
+        // Keep what we got.
+        setItemResult(item.id, {
+          text: accumulated,
+          usage: null,
+          durationMs: Math.round(performance.now() - t0),
+        });
         $('outMeta').textContent =
           `partial · ${((performance.now() - t0) / 1000).toFixed(2)}s`;
       } else {
         resultEl.textContent = '';
       }
-    } else {
-      setStatus(e.message || 'Request failed', 'err');
-      if (!accumulated) resultEl.textContent = '';
+      return false;
     }
+    setItemStatus(item.id, 'error', { error: e.message || 'Request failed' });
+    if (!accumulated) resultEl.textContent = '';
+    return true;   // processed (with error); batch continues
   } finally {
-    $('runBtn').disabled  = false;
-    $('stopBtn').disabled = true;
-    $('stopBtn').hidden   = true;
-    // Stop the pulsing dots regardless of how we exited.
     finishThinking();
-    abortCtrl = null;
   }
 }
 
+/* ---------- Batch runner ---------- */
+
+async function runBatch() {
+  if (batchRunning) return;
+  const cfg = getConfig();
+  if (!cfg.apiKey)   { setStatus('Missing API key.', 'err');   return; }
+  if (!cfg.endpoint) { setStatus('Missing endpoint.', 'err'); return; }
+  if (pendingCount() === 0) return;
+  saveConfig();
+
+  batchRunning = true;
+  abortCtrl = new AbortController();
+  $('runBtn').disabled    = true;
+  $('stopBtn').hidden     = false;
+  $('stopBtn').disabled   = false;
+
+  const total = pendingCount();
+  let idx = 0;
+  let aborted = false;
+
+  try {
+    while (true) {
+      if (abortCtrl.signal.aborted) { aborted = true; break; }
+      const item = findNextPending();
+      if (!item) break;
+      idx++;
+      const processed = await runOne(item, cfg, abortCtrl.signal, { idx, total });
+      if (!processed) { aborted = true; break; }
+      // After each item, refresh the saved config in case the user edited
+      // the prompt mid-batch. The next item picks up the change.
+      Object.assign(cfg, getConfig());
+    }
+
+    if (aborted) {
+      setStatus(`Stopped at ${idx} / ${total}.`, '');
+    } else {
+      setStatus(`Done · ${idx} / ${total}.`, 'ok');
+      haptic();
+    }
+  } finally {
+    batchRunning = false;
+    abortCtrl = null;
+    setActiveItemId(null);
+    $('runBtn').disabled  = false;
+    $('stopBtn').disabled = true;
+    $('stopBtn').hidden   = true;
+    refreshRunBtn();
+  }
+}
+
+/* ---------- Run-button label ---------- */
+
+export function refreshRunBtn() {
+  const btn = $('runBtn');
+  if (!btn) return;
+  const label = btn.querySelector('.run-label');
+  const n = pendingCount();
+  if (label) {
+    label.textContent = n === 0
+      ? 'Recognize text'
+      : n === 1
+        ? 'Recognize 1 image'
+        : `Recognize ${n} images`;
+  }
+  btn.disabled = n === 0 || batchRunning;
+}
+
+/* ---------- Show selected item's stored result in the Result panel ---------- */
+
+function showItemResult(item) {
+  if (!item) return;
+  const resultEl = $('result');
+  if (batchRunning && item.id !== /* active */ undefined) {
+    // While running, don't clobber the active stream — only allow switching
+    // to view a row that's NOT currently active.
+  }
+  if (batchRunning) return;
+  resultEl.textContent = item.text || '';
+  if (item.status === 'done' && item.durationMs != null) {
+    $('outMeta').textContent =
+      `${(item.durationMs / 1000).toFixed(2)}s` +
+      (item.usage ? ` · in:${item.usage.input_tokens} out:${item.usage.output_tokens}` : '');
+  } else if (item.status === 'error') {
+    $('outMeta').textContent = `error · ${item.error || ''}`;
+  } else {
+    $('outMeta').textContent = '';
+  }
+}
+
+/* ---------- Wiring ---------- */
+
 export function initApi() {
-  $('runBtn')?.addEventListener('click', runOCR);
+  $('runBtn')?.addEventListener('click', runBatch);
   $('stopBtn')?.addEventListener('click', () => { abortCtrl?.abort(); });
 
-  // Thinking panel: click the head to expand / collapse the reasoning body.
+  // Thinking panel: click head to toggle expand / collapse.
   $('thinkingHead')?.addEventListener('click', () => {
     const el = $('thinking');
     if (!el) return;
@@ -265,4 +355,10 @@ export function initApi() {
     el.classList.toggle('collapsed', willCollapse);
     $('thinkingHead').setAttribute('aria-expanded', String(!willCollapse));
   });
+
+  initQueue({
+    onChange: refreshRunBtn,
+    onSelect: showItemResult,
+  });
+  refreshRunBtn();
 }

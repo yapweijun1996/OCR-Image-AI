@@ -8,9 +8,10 @@
  * Module dependency order (top → bottom = no internal app deps → many):
  *   utils → db
  *   utils → config → theme
- *   utils → image
- *   utils + db + image → history
- *   utils + config + image + db + history → api
+ *   utils → queue
+ *   utils + queue → image
+ *   utils + db + queue → history
+ *   utils + config + db + queue + history → api  (api boots the queue's listeners)
  *   utils → result, modal, pwa
  *
  * Each module is independently readable; cross-module calls are explicit

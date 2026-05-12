@@ -1,14 +1,14 @@
 /**
  * history.js — record list rendering + row actions.
  *
- * Reads from db.js (the source of truth) and triggers image.loadFromHistory
- * for the Re-run action. Re-rendering happens after every mutation
- * (add via api.js, delete here, clear here).
+ * Reads from db.js (the source of truth). "Re-run" pushes the stored
+ * image back into the live queue (`js/queue.js`) so the user can adjust
+ * the prompt / effort and run it again.
  */
 
-import { $, fmtBytes, fmtTime, escapeHtml, setStatus, haptic } from './utils.js';
+import { $, fmtTime, escapeHtml, setStatus, haptic } from './utils.js';
 import { dbAll, dbDelete, dbClear } from './db.js';
-import { loadFromHistory } from './image.js';
+import { addItem, selectForView } from './queue.js';
 
 const DELETE_ICON = `
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -66,7 +66,20 @@ export function initHistory() {
     if (!it) return;
 
     if (act === 'view') {
-      loadFromHistory(it);
+      // Push the stored image back into the live queue as a fresh pending
+      // item. The user can edit the prompt / effort and Run again.
+      const queued = addItem({
+        dataUrl: it.image,
+        name:    it.name || 'history.png',
+        size:    it.size,
+        type:    it.type || 'image/png',
+        w:       it.w,
+        h:       it.h,
+      });
+      selectForView(queued.id);
+      setStatus('Re-queued from history — edit the prompt, then Run', 'ok');
+      haptic();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (act === 'copy') {
       try {
         await navigator.clipboard.writeText(it.text || '');

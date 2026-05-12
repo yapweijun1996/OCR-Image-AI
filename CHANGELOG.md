@@ -13,6 +13,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Playwright smoke test
 - License file
 
+## [0.6.0] — 2026-05-12
+
+### Added
+
+- **Batch processing of multiple images.** Drop, paste, or pick any number of images — each becomes a row in a new queue list. **Recognize text** button now labels itself with the pending count (e.g. *Recognize 5 images*) and runs the queue sequentially. Per-row status indicators: `Queued` / `Running…` / `Done · 4.3s` / `Error · …` / `Aborted`. Click any row to view its stored result in the Result panel.
+- New module [`js/queue.js`](js/queue.js) — in-memory FIFO queue with rendering. Items are not persisted (history is the durable store); reloading drops the queue.
+- The status row reports batch progress: `Thinking… (2 / 5 · receipt-03.jpg)`.
+- Stop button now aborts the current item and skips the remaining queue (preserves any partial output it already streamed).
+
+### Changed
+
+- `js/image.js` lost the single-image `current` state; `handleFile()` is now a back-compat shim that routes to `handleFiles()` which adds every prepared image to the queue.
+- `js/api.js` split into `runBatch()` + `runOne(item)`. Single `AbortController` per batch.
+- `js/history.js` **Re-run** now pushes the stored image back into the queue as a pending item (instead of replacing a single current image), so you can chain Re-runs of multiple records and run them all at once.
+- `<input type="file">` gained `multiple`.
+- `Clear` button renamed to **Clear queue**.
+- SW `VERSION` → `2026-05-12-10`. Precache adds `js/queue.js`.
+
+### Removed
+
+- The single-image preview block (`#preview` / `previewImg` / `previewMeta`). Each queue row carries its own thumbnail.
+
 ## [0.5.0] — 2026-05-12
 
 ### Added

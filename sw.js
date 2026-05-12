@@ -7,7 +7,7 @@
  *  - SKIP_WAITING message channel for user-driven update
  *  - share_target POST -> intercept, stash image in cache, redirect to /
  */
-const VERSION    = '2026-05-12-9';
+const VERSION    = '2026-05-12-10';
 const CACHE_NAME = `ocr-${VERSION}`;
 // Separate cache for the share_target hand-off — doesn't get nuked on version bumps.
 const SHARE_CACHE = 'ocr-share-inbox';
@@ -35,6 +35,7 @@ const PRECACHE = [
   './js/result.js',
   './js/modal.js',
   './js/prompts.js',
+  './js/queue.js',
 ];
 
 self.addEventListener('install', (e) => {

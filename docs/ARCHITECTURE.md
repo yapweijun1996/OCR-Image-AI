@@ -27,9 +27,10 @@ High-level shape of the OCR demo. Read this before changing how the pieces fit t
 │   ├── db.js         # IndexedDB wrapper (dbAdd / dbAll / dbDelete / dbClear)
 │   ├── config.js     # XOR-decoded key, LS keys, loadConfig / saveConfig / getConfig
 │   ├── theme.js      # data-theme management + theme-color sync
-│   ├── image.js      # downscale, current state, drop/paste/pick, share-target consume
+│   ├── image.js      # File → downscaled image → queue; drop/paste/pick + share-target
+│   ├── queue.js      # in-memory batch queue + per-row rendering
 │   ├── history.js    # renderHistory, Re-run / Copy / Delete row actions, JSON export
-│   ├── api.js        # streaming SSE client, runOCR, Stop button, AbortController
+│   ├── api.js        # streaming SSE client, runBatch + runOne, Stop button
 │   ├── result.js     # Copy / Download / Share buttons for the output panel
 │   ├── modal.js      # generic open/close (modal currently dormant)
 │   ├── pwa.js        # SW registration, update banner, install prompt
@@ -64,66 +65,71 @@ Every JS file exports a single `init<Name>()` function (idempotent, safe to call
 
 | File           | Public exports                                       | Imports from                                |
 |----------------|------------------------------------------------------|---------------------------------------------|
-| `utils.js`     | `$`, `fmtBytes`, `fmtTime`, `escapeHtml`, `setStatus`, `haptic` | (none)                              |
-| `db.js`        | `dbAdd`, `dbAll`, `dbDelete`, `dbClear`              | (none)                                      |
-| `config.js`    | `LS`, `loadConfig`, `saveConfig`, `getConfig`, `initConfig` | `utils`                              |
-| `theme.js`     | `applyTheme`, `initTheme`                            | `utils`, `config`                           |
-| `image.js`     | `getCurrent`, `loadFromHistory`, `clearCurrent`, `initImage`, `handleFile` | `utils`              |
-| `history.js`   | `renderHistory`, `initHistory`                       | `utils`, `db`, `image`                      |
-| `api.js`       | `runOCR`, `initApi`                                  | `utils`, `config`, `image`, `db`, `history` |
-| `result.js`    | `initResult`                                         | `utils`                                     |
-| `modal.js`     | `closeModal`, `initModal`                            | `utils`                                     |
-| `pwa.js`       | `initPwa`                                            | `utils`                                     |
-| `main.js`      | (entry point — no exports)                           | every `init*` above                         |
+| `utils.js`     | `$`, `fmtBytes`, `fmtTime`, `escapeHtml`, `setStatus`, `haptic` | (none)                                |
+| `db.js`        | `dbAdd`, `dbAll`, `dbDelete`, `dbClear`              | (none)                                              |
+| `config.js`    | `LS`, `loadConfig`, `saveConfig`, `getConfig`, `initConfig` | `utils`, `prompts`                           |
+| `theme.js`     | `applyTheme`, `initTheme`                            | `utils`, `config`                                   |
+| `prompts.js`   | `PROMPT_PRESETS`, `DEFAULT_PRESET`, `detectPreset`   | (none)                                              |
+| `queue.js`     | `addItem`, `removeItem`, `clearQueue`, `getItem`, `findNextPending`, `setItemStatus`, `setItemResult`, `selectForView`, `pendingCount`, `renderQueue`, `initQueue` | `utils` |
+| `image.js`     | `handleFile`, `handleFiles`, `consumeSharedImage`, `initImage` | `utils`, `queue`                          |
+| `history.js`   | `renderHistory`, `initHistory`                       | `utils`, `db`, `queue`                              |
+| `api.js`       | `refreshRunBtn`, `initApi`                           | `utils`, `config`, `db`, `queue`, `history`         |
+| `result.js`    | `initResult`                                         | `utils`                                             |
+| `modal.js`     | `closeModal`, `initModal`                            | `utils`                                             |
+| `pwa.js`       | `initPwa`                                            | `utils`                                             |
+| `fouc.js`      | (sync `<script>` — runs before CSS, sets `data-theme`) | (none)                                            |
+| `main.js`      | (entry point — no exports)                           | every `init*` above                                 |
 
 No circular imports. Single direction of data flow.
 
 ## Data flow
 
 ```
-            ┌─────────────────────────────────────┐
-            │   User picks / drops / pastes image │
-            └────────────────┬────────────────────┘
+            ┌─────────────────────────────────────────────┐
+            │  User picks / drops / pastes 1..N images    │
+            └────────────────┬────────────────────────────┘
                              │
                              ▼
              ┌─────────────────────────────┐
-             │  FileReader → data URL      │
-             │  Canvas downscale (≤1600px) │
+             │  prepareImage(file) per file│
+             │  Canvas downscale ≤1600px   │
              └────────────────┬────────────┘
-                              │  current = { dataUrl, name, size, w, h }
+                              │  queue.addItem({…})  →  pending row appears
                               ▼
              ┌──────────────────────────────┐
-User clicks  │  runOCR()                    │  ◄── prompt + effort from UI
-"Recognize"  │  POST /v1/responses          │
-─────────────►│  stream: true                │
+User clicks  │  runBatch()                  │ ◄── prompt + effort from UI
+"Recognize"  │  for each pending item:      │     (re-read between items so
+─────────────►│    runOne(item)              │      mid-batch edits apply)
              └─┬────────────────────────────┘
-               │ fetch().body (ReadableStream)
+               │  per item:
+               │   • setItemStatus(running)
+               │   • POST /v1/responses (stream:true)
+               │   • readSSE — reasoning_summary deltas → Thinking panel
+               │              output_text deltas       → Result panel
+               │   • setItemStatus(done|error|aborted)
+               │   • setItemResult({text, usage, durationMs})
+               │   • dbAdd(record) + renderHistory()
                ▼
              ┌──────────────────────────────┐
-             │  readSSE()                   │
-             │  parse data: <json> events   │
-             │  on delta → append to DOM    │  ──► result panel
-             │  on completed → record usage │
-             └─┬────────────────────────────┘
-               │ accumulated text
-               ▼
-             ┌──────────────────────────────┐
-             │  IndexedDB.add(record)       │
-             │  renderHistory()             │
+             │  AbortController fires once  │
+             │  per batch (Stop cancels     │
+             │  current + skips remaining)  │
              └──────────────────────────────┘
 ```
 
 ## State summary
 
-| State                          | Where it lives          | Lifetime           |
-|--------------------------------|-------------------------|--------------------|
-| Theme (`light` / `dark` / auto)| `localStorage`          | Until user clears  |
-| Prompt, effort                 | `localStorage`          | Until user clears  |
-| Hidden config (endpoint, key, model) | DOM input values (hardcoded) | Session — never persisted from UI |
-| Current image (`current`)      | JS variable             | Until cleared      |
-| AbortController (`abortCtrl`)  | JS variable             | One run            |
-| History records                | IndexedDB `ocr-db.records` | Until user clears |
-| Cached PWA shell               | Cache Storage `ocr-<VERSION>` | Until SW activates new VERSION |
+| State                          | Where it lives                       | Lifetime           |
+|--------------------------------|--------------------------------------|--------------------|
+| Theme (`light` / `dark` / auto)| `localStorage`                       | Until user clears  |
+| Prompt + preset, effort        | `localStorage`                       | Until user clears  |
+| Hidden config (endpoint, key, model) | DOM input values (hardcoded)   | Session — never persisted from UI |
+| **Batch queue** (`queue` array in `js/queue.js`) | module-scoped JS state | In-memory only — wiped on reload |
+| Currently-active item id       | module-scoped JS state               | One batch          |
+| AbortController                | JS variable                          | One batch          |
+| History records                | IndexedDB `ocr-db.records`           | Until user clears  |
+| Cached PWA shell               | Cache Storage `ocr-<VERSION>`        | Until SW activates new VERSION |
+| Share-target inbox             | Cache Storage `ocr-share-inbox`      | Survives version bumps; deleted after consumption |
 
 ## External dependencies
 
@@ -143,8 +149,10 @@ User clicks  │  runOCR()                    │  ◄── prompt + effort fro
 | You want to…                          | Edit                                                              |
 |---------------------------------------|-------------------------------------------------------------------|
 | Add a new config knob                 | `index.html` (new `<div class="list-row">`) + `LS` in `js/config.js` + add to `loadConfig` / `saveConfig` / `getConfig` |
-| Tweak the streaming output rendering  | `readSSE` callback inside `runOCR()` in `js/api.js`               |
+| Tweak the streaming output rendering  | `readSSE` callback inside `runOne()` in `js/api.js`               |
+| Add a queue-row column or action      | `renderQueue()` template + `initQueue()` click handler in `js/queue.js`; new CSS in section 7b of `assets/styles.css` |
 | Add a new history-row action          | Row template inside `renderHistory()` + click handler in `initHistory()`, both in `js/history.js` |
+| Add another prompt preset             | Append to `PROMPT_PRESETS` in `js/prompts.js` (combobox rebuilt at boot) |
 | Theme a new component                 | `:root` tokens in `assets/styles.css` (section 1), then the component's section |
 | Cache a new asset for offline use     | `PRECACHE` array in [`sw.js`](../sw.js) + bump `VERSION`          |
 | Add a new module                      | Drop a file in `js/`, export `init<Name>()`, import + call in `js/main.js` |
