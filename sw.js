@@ -7,7 +7,7 @@
  *  - SKIP_WAITING message channel for user-driven update
  *  - share_target POST -> intercept, stash image in cache, redirect to /
  */
-const VERSION    = '2026-05-12-7';
+const VERSION    = '2026-05-12-8';
 const CACHE_NAME = `ocr-${VERSION}`;
 // Separate cache for the share_target hand-off — doesn't get nuked on version bumps.
 const SHARE_CACHE = 'ocr-share-inbox';

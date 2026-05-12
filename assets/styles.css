@@ -144,6 +144,11 @@
 *,*::before,*::after{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
 html,body{ margin:0; padding:0 }
 html{ overflow-x:hidden; }
+
+/* The HTML `hidden` attribute must beat any later `display:` rules.
+   Required because `.list-row { display: flex }` and `.btn { display: inline-flex }`
+   would otherwise win the cascade by source order. */
+[hidden]{ display: none !important; }
 body{
   background: var(--bg);
   color: var(--fg);
