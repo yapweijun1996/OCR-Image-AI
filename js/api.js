@@ -18,6 +18,44 @@ import { renderHistory } from './history.js';
 
 let abortCtrl = null;
 
+/* ---------- Thinking panel helpers ---------- */
+function resetThinking() {
+  const el = $('thinking');
+  const body = $('thinkingBody');
+  const label = $('thinkingLabel');
+  if (!el || !body || !label) return;
+  el.hidden = true;
+  el.classList.add('collapsed');
+  el.classList.remove('done');
+  body.textContent = '';
+  label.textContent = 'Thinking…';
+  $('thinkingHead')?.setAttribute('aria-expanded', 'false');
+}
+
+function appendThinking(delta) {
+  const el = $('thinking');
+  const body = $('thinkingBody');
+  if (!el || !body || !delta) return;
+  if (el.hidden) {
+    // First reasoning delta — reveal and auto-expand so the user sees activity.
+    el.hidden = false;
+    el.classList.remove('collapsed');
+    $('thinkingHead')?.setAttribute('aria-expanded', 'true');
+  }
+  body.appendChild(document.createTextNode(delta));
+  // Auto-scroll to follow the latest text.
+  body.scrollTop = body.scrollHeight;
+}
+
+function finishThinking() {
+  const el = $('thinking');
+  const label = $('thinkingLabel');
+  if (!el || el.hidden) return;
+  el.classList.add('done', 'collapsed');
+  if (label) label.textContent = 'Thought process';
+  $('thinkingHead')?.setAttribute('aria-expanded', 'false');
+}
+
 /**
  * Read an SSE stream from `body`, calling `onEvent` for each parsed event.
  * Aborts cleanly when `signal.aborted` flips true.
@@ -67,7 +105,8 @@ export async function runOCR() {
   $('stopBtn').disabled = false;
   resultEl.textContent    = '';
   $('outMeta').textContent = '';
-  setStatus('<span class="spin"></span>Streaming…');
+  resetThinking();
+  setStatus('<span class="spin"></span>Thinking…');
 
   abortCtrl = new AbortController();
 
@@ -113,14 +152,46 @@ export async function runOCR() {
       throw new Error('No response body (streaming unsupported by this browser).');
     }
 
+    let outputStarted = false;
     await readSSE(resp.body, (event) => {
       const t = event?.type;
+
+      // Reasoning summary deltas (effort=medium and above with summary:auto).
+      // Be defensive about event-name drift — the API has shipped a few variants.
+      if (
+        t === 'response.reasoning_summary_text.delta' ||
+        t === 'response.reasoning_summary.delta'      ||
+        t === 'response.reasoning.delta'
+      ) {
+        appendThinking(event.delta || event.text || '');
+        return;
+      }
+      if (
+        t === 'response.reasoning_summary_text.done' ||
+        t === 'response.reasoning_summary.done'      ||
+        t === 'response.reasoning.done'              ||
+        t === 'response.reasoning_summary_part.done'
+      ) {
+        // Reasoning phase wrapped up — soft-collapse, but don't switch status
+        // yet (the answer may still take a moment to start streaming).
+        return;
+      }
+
+      // Output text deltas.
       if (t === 'response.output_text.delta') {
         const delta = event.delta || '';
         if (!delta) return;
+        if (!outputStarted) {
+          outputStarted = true;
+          finishThinking();
+          setStatus('<span class="spin"></span>Writing…');
+        }
         accumulated += delta;
         resultEl.appendChild(document.createTextNode(delta));
-      } else if (t === 'response.completed') {
+        return;
+      }
+
+      if (t === 'response.completed') {
         usage = event.response?.usage || null;
       } else if (t === 'response.error' || t === 'error') {
         const msg = event?.error?.message || event?.message || 'stream error';
@@ -176,6 +247,8 @@ export async function runOCR() {
     $('runBtn').disabled  = false;
     $('stopBtn').disabled = true;
     $('stopBtn').hidden   = true;
+    // Stop the pulsing dots regardless of how we exited.
+    finishThinking();
     abortCtrl = null;
   }
 }
@@ -183,4 +256,13 @@ export async function runOCR() {
 export function initApi() {
   $('runBtn')?.addEventListener('click', runOCR);
   $('stopBtn')?.addEventListener('click', () => { abortCtrl?.abort(); });
+
+  // Thinking panel: click the head to expand / collapse the reasoning body.
+  $('thinkingHead')?.addEventListener('click', () => {
+    const el = $('thinking');
+    if (!el) return;
+    const willCollapse = !el.classList.contains('collapsed');
+    el.classList.toggle('collapsed', willCollapse);
+    $('thinkingHead').setAttribute('aria-expanded', String(!willCollapse));
+  });
 }

@@ -13,6 +13,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Playwright smoke test
 - License file
 
+## [0.5.0] — 2026-05-12
+
+### Added
+
+- **Live "Thinking" panel** in the Result card. Streams the model's reasoning summary as it works, with pulsing dots while active. Collapses to a compact "Thought process" header when the actual OCR answer starts streaming — click to expand and review what the model was thinking. Visible feedback that the request is alive even before the first OCR token arrives.
+- Status row now reports progress in three phases: **Thinking… → Writing… → Done**.
+
+### Changed
+
+- `js/api.js` SSE handler now recognizes `response.reasoning_summary_text.delta` (with defensive fallbacks for `response.reasoning_summary.delta` and `response.reasoning.delta`).
+- SW `VERSION` → `2026-05-12-9`.
+
 ## [0.4.0] — 2026-05-12
 
 ### Added

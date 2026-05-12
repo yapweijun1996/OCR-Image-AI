@@ -517,6 +517,80 @@ body{
 
 
 /* ============================================================
+ * 9b. Thinking panel — reasoning summary stream
+ * ============================================================ */
+.thinking{
+  margin-bottom: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+.thinking-head{
+  appearance:none; border:0; cursor:pointer; width:100%;
+  display:flex; align-items:center; gap: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: var(--fs-footnote);
+  text-align: left;
+  letter-spacing: 0;
+}
+.thinking-head:hover{
+  background: color-mix(in srgb, var(--bg-tertiary) 100%, var(--fg) 4%);
+}
+.thinking-label{
+  flex: 1; min-width: 0;
+  font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.thinking-toggle{
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  color: var(--fg-tertiary);
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+.thinking.collapsed .thinking-toggle{ transform: rotate(-90deg); }
+.thinking-body{
+  padding: 0 14px 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  color: var(--fg-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.thinking.collapsed .thinking-body{ display: none; }
+
+/* Animated dots — pulse while streaming, freeze when done */
+.thinking-icon{
+  display: inline-flex; gap: 3px; flex-shrink: 0;
+}
+.thinking-icon span{
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+.thinking-icon span:nth-child(2){ animation-delay: .18s; }
+.thinking-icon span:nth-child(3){ animation-delay: .36s; }
+@keyframes thinking-pulse{
+  0%, 60%, 100%{ opacity: .25; transform: scale(.7); }
+  30%{ opacity: 1; transform: scale(1); }
+}
+/* When the reasoning phase finishes, freeze the dots at a calm steady state */
+.thinking.done .thinking-icon span{
+  animation: none;
+  opacity: .55;
+  background: var(--fg-tertiary);
+}
+
+
+/* ============================================================
  * 10. Result text
  * ============================================================ */
 .result-wrap{ position: relative; }

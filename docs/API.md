@@ -72,15 +72,17 @@ The reader logic lives in `readSSE()` in `index.html`.
 
 ### Event types we handle
 
-| `type`                            | Payload shape                                        | What we do                                    |
-|-----------------------------------|------------------------------------------------------|------------------------------------------------|
-| `response.created`                | `{ response: { id, ... } }`                          | (ignored)                                      |
-| `response.in_progress`            | keep-alive ping                                      | (ignored)                                      |
-| `response.output_text.delta`      | `{ delta: "<fragment>" }`                            | `resultEl.appendChild(document.createTextNode(delta))` |
-| `response.output_text.done`       | `{ text: "<full>" }`                                 | (ignored — we already accumulated deltas)      |
-| `response.completed`              | `{ response: { usage: { input_tokens, output_tokens, output_tokens_details: { reasoning_tokens } } } }` | Render `outMeta` line, save record |
-| `response.error` / `error`        | `{ error: { message: "..." } }`                      | Throw — caught and rendered as error status    |
-| `[DONE]` (literal payload string) | n/a                                                  | Terminate read loop                            |
+| `type`                                | Payload shape                                        | What we do                                    |
+|---------------------------------------|------------------------------------------------------|------------------------------------------------|
+| `response.created`                    | `{ response: { id, ... } }`                          | (ignored)                                      |
+| `response.in_progress`                | keep-alive ping                                      | (ignored)                                      |
+| `response.reasoning_summary_text.delta` (+ legacy `response.reasoning_summary.delta` / `response.reasoning.delta`) | `{ delta: "<fragment>" }` | Reveal the **Thinking panel**, append the delta as a text node, auto-scroll |
+| `response.reasoning_summary_text.done` / `response.reasoning_summary_part.done` | (no payload of interest) | (logged but no-op — we wait for the first output delta to collapse the panel) |
+| `response.output_text.delta`          | `{ delta: "<fragment>" }`                            | On first delta: collapse the Thinking panel + flip status to **Writing…**. Then append the delta as a text node into the result |
+| `response.output_text.done`           | `{ text: "<full>" }`                                 | (ignored — we already accumulated deltas)      |
+| `response.completed`                  | `{ response: { usage: { input_tokens, output_tokens, output_tokens_details: { reasoning_tokens } } } }` | Render `outMeta` line, save record |
+| `response.error` / `error`            | `{ error: { message: "..." } }`                      | Throw — caught and rendered as error status    |
+| `[DONE]` (literal payload string)     | n/a                                                  | Terminate read loop                            |
 
 ### Why text-node append?
 

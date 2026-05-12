@@ -182,6 +182,24 @@
         <span class="card-meta" id="outMeta"></span>
       </div>
       <div class="card-body">
+        <!-- Thinking panel: shows the model's reasoning summary live
+             while it's working, then collapses when the answer starts. -->
+        <div class="thinking collapsed" id="thinking" hidden>
+          <button class="thinking-head" id="thinkingHead" type="button"
+                  aria-expanded="false" aria-controls="thinkingBody">
+            <span class="thinking-icon" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </span>
+            <span class="thinking-label" id="thinkingLabel">Thinking…</span>
+            <svg class="thinking-toggle" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                 stroke-linejoin="round" aria-hidden="true">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+          <div class="thinking-body" id="thinkingBody"></div>
+        </div>
+
         <div class="result-wrap">
           <div class="result" id="result"></div>
         </div>
