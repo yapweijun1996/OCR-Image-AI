@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+  <title>AI Image OCR — drag an image, get clean text</title>
+  <meta name="description" content="Browser-native OCR demo powered by GPT vision. Drag, paste or pick an image and get clean text back.">
+  <meta name="author" content="Yap Wei Jun">
+  <meta name="theme-color" content="#ff6a3d">
+  <meta name="color-scheme" content="light dark">
+
+  <!-- Content Security Policy. No inline scripts (after Phase 10), no
+       inline styles, no eval. Allows our own assets + the gateway only. -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'self';
+    style-src 'self';
+    img-src 'self' data: blob:;
+    font-src 'self';
+    connect-src 'self' https://gpt.yapweijun1996.com;
+    manifest-src 'self';
+    worker-src 'self';
+    object-src 'none';
+    base-uri 'self';
+    form-action 'self';
+    frame-ancestors 'none';
+  ">
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AI OCR">
+
+  <link rel="stylesheet" href="./assets/styles.css">
+
+  <!-- FOUC guard — sync (non-module) script so it runs before CSS paints.
+       See js/fouc.js for the why. -->
+  <script src="./js/fouc.js"></script>
+</head>
+<body>
+
+<main class="app">
+
+  <!-- ============== Header ============== -->
+  <header class="nav">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 8V5a1 1 0 0 1 1-1h3"/>
+          <path d="M20 8V5a1 1 0 0 0-1-1h-3"/>
+          <path d="M4 16v3a1 1 0 0 0 1 1h3"/>
+          <path d="M20 16v3a1 1 0 0 1-1 1h-3"/>
+          <line x1="8" y1="10" x2="16" y2="10"/>
+          <line x1="8" y1="14" x2="13" y2="14"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title">AI Image OCR</div>
+        <div class="brand-sub">Demo · vanilla · streaming SSE</div>
+      </div>
+    </div>
+
+    <div class="nav-right">
+      <button class="install-chip" id="installBtn" type="button" aria-label="Install app">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>
+        </svg>
+        Install
+      </button>
+      <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+        </svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="stack">
+
+    <!-- ============== Config (iOS grouped list) ============== -->
+    <section class="list" aria-labelledby="cfg-label">
+      <div class="card-header">
+        <h2 class="card-title" id="cfg-label">Configuration</h2>
+        <span class="card-meta">Saved locally</span>
+      </div>
+      <!-- Hardcoded; hidden from end users but kept in DOM so JS can read them -->
+      <div class="list-row" hidden>
+        <label class="list-label" for="cfgEndpoint">Endpoint</label>
+        <input class="input input-mono" type="text" id="cfgEndpoint" value="https://gpt.yapweijun1996.com/v1/responses" inputmode="url" spellcheck="false" autocapitalize="off">
+      </div>
+      <div class="list-row" hidden>
+        <label class="list-label" for="cfgKey">API key</label>
+        <input class="input input-mono" type="password" id="cfgKey" placeholder="gw_…" spellcheck="false" autocomplete="off" autocapitalize="off">
+      </div>
+      <div class="list-row" hidden>
+        <label class="list-label" for="cfgModel">Model</label>
+        <input class="input input-mono" type="text" id="cfgModel" value="gpt-5.4-mini" spellcheck="false" autocapitalize="off">
+      </div>
+      <div class="list-row">
+        <label class="list-label" for="cfgEffort">Reasoning effort</label>
+        <select class="input input-mono select" id="cfgEffort" aria-label="Reasoning effort">
+          <option value="minimal">minimal — fastest, simple receipts/labels</option>
+          <option value="low">low</option>
+          <option value="medium" selected>medium — default</option>
+          <option value="high">high — dense / multi-column / handwriting</option>
+          <option value="xhigh">xhigh — last resort</option>
+        </select>
+      </div>
+      <div class="list-row">
+        <label class="list-label" for="cfgPromptPreset">Prompt preset</label>
+        <select class="input select" id="cfgPromptPreset" aria-label="Prompt preset">
+          <!-- Options populated by js/config.js from js/prompts.js -->
+        </select>
+      </div>
+      <div class="list-row">
+        <label class="list-label" for="cfgPrompt">Prompt (English only)</label>
+        <textarea class="textarea" id="cfgPrompt" lang="en" spellcheck="true"
+                  placeholder="Loaded from preset — edit to customize."></textarea>
+      </div>
+    </section>
+
+    <!-- ============== Input ============== -->
+    <section class="card" aria-labelledby="in-label">
+      <div class="card-header">
+        <h2 class="card-title" id="in-label">Image</h2>
+        <span class="card-meta">Drag · Paste · Pick</span>
+      </div>
+      <div class="card-body">
+        <div class="drop" id="drop" role="button" tabindex="0" aria-label="Choose image">
+          <div class="drop-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="3"/>
+              <circle cx="9" cy="9" r="1.5" fill="currentColor" stroke="none"/>
+              <path d="M3 16.5 8.5 11l5 5L17 13l4 4"/>
+            </svg>
+          </div>
+          <div class="drop-title">Drop an image, or tap to choose</div>
+          <div class="drop-hint">JPG · PNG · WebP — or paste with <kbd>⌘V</kbd> / <kbd>Ctrl V</kbd></div>
+        </div>
+        <input type="file" id="file" accept="image/*" hidden>
+
+        <div class="preview" id="preview">
+          <div class="preview-img-wrap">
+            <img id="previewImg" alt="Selected image preview">
+          </div>
+          <div class="preview-meta" id="previewMeta"></div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-filled" id="runBtn" disabled type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m6 4 14 8-14 8z" fill="currentColor"/>
+            </svg>
+            Recognize text
+          </button>
+          <button class="btn btn-tinted btn-danger" id="stopBtn" type="button" disabled hidden>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="2"/>
+            </svg>
+            Stop
+          </button>
+          <button class="btn btn-gray" id="clearBtn" type="button">Clear</button>
+        </div>
+
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- ============== Output ============== -->
+    <section class="card" aria-labelledby="out-label">
+      <div class="card-header">
+        <h2 class="card-title" id="out-label">Result</h2>
+        <span class="card-meta" id="outMeta"></span>
+      </div>
+      <div class="card-body">
+        <div class="result-wrap">
+          <div class="result" id="result"></div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-tinted btn-sm" id="copyBtn" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>
+            </svg>
+            Copy
+          </button>
+          <button class="btn btn-tinted btn-sm" id="dlBtn" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>
+            </svg>
+            Download .txt
+          </button>
+          <button class="btn btn-tinted btn-sm" id="shareBtn" type="button" hidden>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14a2 2 0 0 0 2-2v-4"/>
+              <path d="M3 15v4a2 2 0 0 0 2 2"/>
+            </svg>
+            Share
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============== History ============== -->
+    <section class="card" aria-labelledby="hist-label">
+      <div class="card-header">
+        <h2 class="card-title" id="hist-label">History</h2>
+        <span class="card-meta">IndexedDB</span>
+      </div>
+      <div class="card-body">
+        <div class="history-list" id="history"></div>
+        <div class="actions">
+          <button class="btn btn-tinted btn-sm" id="exportBtn" type="button">Export JSON</button>
+          <button class="btn btn-tinted btn-sm btn-danger" id="clearHistBtn" type="button">Clear all</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <p class="foot">
+    Demo only · key encoded with <code>20260512</code> XOR pad ·
+    <span class="dim">don't ship this to production.</span>
+  </p>
+</main>
+
+<!-- ============== Modal (currently dormant — see js/modal.js) ============== -->
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="modalTitle">Record</h3>
+      <button class="modal-close" id="modalClose" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <path d="m6 6 12 12M18 6 6 18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-content">
+      <div class="modal-img-wrap"><img id="modalImg" alt=""></div>
+      <div class="result modal-text-spaced" id="modalText"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============== Update banner (PWA) ============== -->
+<div class="update-banner" id="updateBanner" role="alert">
+  <div class="update-banner-text">
+    <span class="t1">Update available</span>
+    <span class="t2">A new version is ready to install.</span>
+  </div>
+  <button class="btn btn-tinted btn-sm" id="updateBtn" type="button">Reload</button>
+</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

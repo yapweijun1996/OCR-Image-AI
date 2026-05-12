@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- maskable-safe: content inside center 80% (radius 205 from center) -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff8a5b"/>
+      <stop offset="100%" stop-color="#ff5a2c"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Stylized scan frame + text lines -->
+  <g fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+    <!-- corner brackets -->
+    <path d="M150 180 V150 H180"/>
+    <path d="M362 180 V150 H332"/>
+    <path d="M150 332 V362 H180"/>
+    <path d="M362 332 V362 H332"/>
+  </g>
+  <!-- text lines inside -->
+  <g fill="#ffffff">
+    <rect x="180" y="208" width="152" height="14" rx="7"/>
+    <rect x="180" y="240" width="112" height="14" rx="7"/>
+    <rect x="180" y="272" width="140" height="14" rx="7"/>
+    <rect x="180" y="304" width="96"  height="14" rx="7"/>
+  </g>
+</svg>
